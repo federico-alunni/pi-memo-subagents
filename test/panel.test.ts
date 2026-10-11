@@ -87,8 +87,20 @@ const SCENARIO_3: PanelData = {
   ],
 };
 
+// A single active group with 4 items on 2 columns: the real-world layout.
+const SCENARIO_4: PanelData = {
+  ...STAGED,
+  title: "panel-refresh",
+  phase: "foundation",
+  done: 2,
+  total: 4,
+  groups: [SCENARIO_2.groups![0]],
+};
+
+const SCENARIOS = [[1, "free rows", SCENARIO_1], [2, "staged groups", SCENARIO_2], [3, "compact", SCENARIO_3], [4, "single active group", SCENARIO_4]] as const;
+
 for (const width of [96, 140]) {
-  for (const [n, label, data] of [[1, "free rows", SCENARIO_1], [2, "staged groups", SCENARIO_2], [3, "compact", SCENARIO_3]] as const) {
+  for (const [n, label, data] of SCENARIOS) {
     test(`golden scenario ${n} (${label}) at W=${width}`, () => {
       const lines = renderPanel(data, width, theme);
       assert.equal(lines.map(stripAnsi).join("\n"), golden(n, width));
@@ -325,4 +337,42 @@ test("free rows render elapsed, selected, right-aligned activity, and ? in top b
   assert.ok(plain[1].includes("aspetta una tua risposta"), "shows text");
   assert.ok(plain[1].includes("profile-high|high · question 15s"), "shows rightText");
   assert.ok(plain[3].includes("/subagent · Ctrl+Alt+X"), "shows bottom hint");
+});
+
+test("column headers sit on the same column as the item glyphs (left and right)", () => {
+  const DOT = /^(.*?)● /;
+  for (const width of [96, 140]) {
+    for (const [n, , data] of SCENARIOS) {
+      if (!data.columns?.length || n === 1 || data.compact) continue;
+      const lines = renderPanel(data, width, theme).map(stripAnsi).map((l) => [...l]);
+      const headerIdx = lines.findIndex((l) => l.join("").includes("B S R"));
+      assert.ok(headerIdx >= 0, `scenario ${n} W=${width}: header line`);
+      const headerLine = lines[headerIdx];
+      const headerCols: number[] = [];
+      headerLine.forEach((ch, i) => { if (ch === "B" && headerLine[i + 1] === " " && headerLine[i + 2] === "S") headerCols.push(i); });
+      const sep = headerLine.indexOf("│", 2);
+      // Single-group and multi-group alike: one B per column.
+      assert.ok(headerCols.length >= 1);
+      const itemLines = lines.slice(headerIdx + 1).filter((l) => l.join("").match(/[✓·▶] [✓·▶] [✓·▶·]/));
+      assert.ok(itemLines.length > 0);
+      const firstGlyph = (line: string[], from: number, to: number) => {
+        const seg = line.slice(from, to).join("");
+        const m = seg.match(/● \S+\s+(\S)/);
+        assert.ok(m, `scenario ${n} W=${width}: item row "${seg}"`);
+        return from + seg.indexOf(m![0]) + m![0].length - 1;
+      };
+      for (const bCol of headerCols) {
+        const isLeft = bCol < sep;
+        const [from, to] = isLeft ? [0, sep] : [sep + 1, headerLine.length];
+        const rows = itemLines.filter((l) => l.slice(from, to).join("").includes("● "));
+        assert.ok(rows.length > 0);
+        for (const l of rows) assert.equal(firstGlyph(l, from, to), bCol, `scenario ${n} W=${width} ${isLeft ? "left" : "right"}`);
+        // Remaining headers line up too: S, R, C, ✓ over their glyph columns.
+        assert.equal(headerLine.slice(bCol, bCol + 10).join(""), "B S R C  ✓");
+        for (const off of [0, 2, 4, 6, 9]) {
+          for (const l of rows) assert.notEqual(l[bCol + off], " ", `scenario ${n} W=${width}: glyph under header offset ${off}`);
+        }
+      }
+    }
+  }
 });

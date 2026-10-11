@@ -255,6 +255,11 @@ export function renderPanel(data: PanelData, width: number, theme: MirrorTheme):
     return `${nameCol}  ${pad(formatStrip(item), columns.length > 0 ? stripWidth : textWidth)} ${pad(flag, 5)}`;
   };
 
+  // Item geometry shared with the column headers: indent + name column + 2 spaces = first glyph column.
+  const LEFT_INDENT = 4;
+  const RIGHT_INDENT = 3;
+  const stripOffset = 2 + idW + 2;
+
   const formatPair = (left?: PanelItem, right?: PanelItem): string => {
     const leftPrefix = left?.selected ? `  ${theme.fg("accent", "▸")} ` : "    ";
     const rightPrefix = right?.selected ? ` ${theme.fg("accent", "▸")} ` : "   ";
@@ -292,12 +297,12 @@ export function renderPanel(data: PanelData, width: number, theme: MirrorTheme):
       : "";
     const label = `${arrow} ${theme.bold(group.name)} ${dot}`.trimEnd();
     if (active && headers && group.items.some((item) => item.marks)) {
-      const room = 2 + 2 + idW + 1;
+      const room = LEFT_INDENT + stripOffset - 1;
       const short = `${arrow} ${theme.bold(group.name)} ${theme.fg("accent", "●")}`;
       const fitted = visibleWidth(label) <= room ? label : visibleWidth(short) <= room ? short : fit(short, room);
-      const leftPart = pad(fitted, 2 + 2 + idW + 2) + headers;
-      const rightPart = " ".repeat(2 + idW + 2) + headers;
-      lines.push(row(`${pad(leftPart, 2 + cellWidth)} ${sepBar} ${rightPart}`));
+      const leftPart = pad(fitted, LEFT_INDENT + stripOffset) + headers;
+      const rightPart = " ".repeat(RIGHT_INDENT + stripOffset) + headers;
+      lines.push(row(`${pad(leftPart, 2 + cellWidth)} ${sepBar}${rightPart}`));
     } else {
       lines.push(row(label));
     }
@@ -336,11 +341,13 @@ export function renderPanel(data: PanelData, width: number, theme: MirrorTheme):
         const isFirst = colLines.length === 0;
 
         if (isFirst && headers && group.items.some((item) => item.marks)) {
-          const room = cellWidth - visibleWidth(headers) - 1;
+          const indent = isLeft ? LEFT_INDENT : RIGHT_INDENT;
+          const lead = isLeft ? 2 : 1; // spaces already prepended to the header line
+          const headerOffset = indent + stripOffset - lead;
+          const room = headerOffset - 1;
           const short = `${arrow} ${theme.bold(group.name)} ${theme.fg(active ? "accent" : "muted", active ? "●" : "○")}`;
           const fitted = visibleWidth(label) <= room ? label : visibleWidth(short) <= room ? short : fit(short, room);
-          const fill = cellWidth - visibleWidth(fitted) - visibleWidth(headers);
-          const headerLine = `${fitted}${" ".repeat(Math.max(1, fill))}${headers}`;
+          const headerLine = pad(`${pad(fitted, headerOffset)}${headers}`, cellWidth);
           colLines.push(isLeft ? `  ${headerLine}` : ` ${headerLine}`);
         } else {
           colLines.push(isLeft ? `  ${pad(label, cellWidth)}` : ` ${pad(label, cellWidth)}`);
