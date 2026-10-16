@@ -1384,7 +1384,9 @@ export class AgentRuntime {
       } catch (failure) {
         evidenceError = String(failure);
       }
-      if (paneClosed) presence().remove(protocolDir);
+      // Nothing external can exist when the launch failed in the parent phase before any pane was created
+      // (e.g. `pane current` failed): there is nothing to wait for, so no row stays behind. The error is unchanged.
+      if (paneClosed || (phase === "parent" && !paneId)) presence().remove(protocolDir);
       else presence().update(protocolDir, { state: "launch-uncertain" });
       throw new RuntimeError(
         paneClosed ? "launch_failed" : "launch_uncertain",
@@ -1401,6 +1403,43 @@ export class AgentRuntime {
     }
   }
   /** Close a pane this runtime just created and never typed into. Exact identity or no effect. */
+  /**
+   * Display only: retire the "launch uncertain" rows of this runtime that can no longer be real. Such a row
+   * has no handle, so nobody else can close it. A row goes when the child left an `exit.json`, or when Herdr
+   * answers that its pane does not exist; a row whose pane was never identified (lost create response)
+   * goes after `uncertainTtlMs`. A pane that still exists, or a Herdr that cannot answer, keeps the row:
+   * the child may still start. Never consulted for control. Returns the number of rows retired.
+   */
+  async reconcilePresence(options: { now?: number; uncertainTtlMs?: number } = {}): Promise<number> {
+    const now = options.now ?? Date.now();
+    const ttl = options.uncertainTtlMs ?? 10 * 60_000;
+    let retired = 0;
+    for (const entry of presence().list()) {
+      if (entry.state !== "launch-uncertain" || !within(this.root, entry.key)) continue;
+      let gone = false;
+      try {
+        const exit = await json<ChildRecord>(join(entry.key, "exit.json"));
+        if (exit?.kind === "exit") gone = true;
+      } catch {
+        // Unreadable evidence proves nothing.
+      }
+      if (!gone && entry.paneId) {
+        try {
+          await this.herdr(["pane", "get", entry.paneId]);
+        } catch (error) {
+          gone = ["pane_not_found", "not_found"].includes((error as any).herdrCode);
+        }
+      } else if (!gone) {
+        gone = now - entry.updatedAt >= ttl;
+      }
+      // Re-read: the row may have moved on (a late launch result) while Herdr was asked.
+      if (gone && presence().get(entry.key)?.state === "launch-uncertain") {
+        presence().remove(entry.key);
+        retired++;
+      }
+    }
+    return retired;
+  }
   private async closeUnusedPane(created: Pane): Promise<boolean> {
     const same = (pane: Pane | undefined) =>
       !!pane &&

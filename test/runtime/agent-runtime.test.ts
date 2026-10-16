@@ -1670,6 +1670,74 @@ test("presence: one display row per agent, updated by the runtime and annotated 
   u.transport.forget({ protocolDir: uncertain[0].key } as any);
 });
 
+test("presence: a launch that fails before any pane exists leaves no row (error unchanged)", async (t) => {
+  const f = await fixture(t);
+  // Nothing was created or typed: `pane current` itself fails (seen as "Herdr current workspace missing").
+  f.fake.onCall = (input) =>
+    input.argv[0] === "pane" && input.argv[1] === "current"
+      ? { exitCode: 1, stdout: JSON.stringify({ error: { code: "unavailable", message: "no current pane" } }) }
+      : undefined;
+  await assert.rejects(f.transport.launch(f.input), errorCode("launch_uncertain"));
+  assert.equal(f.fake.createCount, 0);
+  assert.equal(presence().list().filter((r) => r.key.startsWith(f.stateDir)).length, 0);
+});
+
+test("presence: reconcilePresence retires a launch-uncertain row only when its pane is gone", async (t) => {
+  const f = await fixture(t);
+  const rows = () => presence().list().filter((r) => r.key.startsWith(f.stateDir));
+  f.fake.readySuppressed = true; // the child never reports ready: the pane exists, the outcome is unknown
+  await assert.rejects(f.transport.launch(f.input), errorCode("launch_uncertain"));
+  assert.equal(rows().length, 1);
+  assert.equal(rows()[0].state, "launch-uncertain");
+  assert.equal(rows()[0].paneId, "pane-1");
+  // The pane still exists: the child may still start, the row stays.
+  assert.equal(await f.transport.reconcilePresence(), 0);
+  assert.equal(rows().length, 1);
+  // Herdr cannot answer: no proof either way, the row stays.
+  f.fake.unavailable = true;
+  assert.equal(await f.transport.reconcilePresence(), 0);
+  assert.equal(rows().length, 1);
+  // Herdr answers that the pane does not exist any more: the orphan goes away.
+  f.fake.unavailable = false;
+  f.fake.missing = true;
+  assert.equal(await f.transport.reconcilePresence(), 1);
+  assert.equal(rows().length, 0);
+});
+
+test("presence: reconcilePresence leaves other states and other runtimes' rows alone", async (t) => {
+  const f = await fixture(t);
+  const g = await fixture(t);
+  f.fake.readySuppressed = true;
+  g.fake.readySuppressed = true;
+  await assert.rejects(f.transport.launch(f.input), errorCode("launch_uncertain"));
+  await assert.rejects(g.transport.launch(g.input), errorCode("launch_uncertain"));
+  const mine = () => presence().list().filter((r) => r.key.startsWith(f.stateDir));
+  const theirs = () => presence().list().filter((r) => r.key.startsWith(g.stateDir));
+  presence().update(mine()[0].key, { state: "missing" });
+  f.fake.missing = true;
+  g.fake.missing = true;
+  assert.equal(await f.transport.reconcilePresence(), 0); // not launch-uncertain
+  assert.equal(mine().length, 1);
+  assert.equal(await f.transport.reconcilePresence(), 0); // g's row belongs to g's runtime
+  assert.equal(theirs().length, 1);
+  assert.equal(await g.transport.reconcilePresence(), 1);
+  assert.equal(theirs().length, 0);
+  presence().remove(mine()[0].key);
+});
+
+test("presence: a launch-uncertain row without a pane (lost create response) expires after a TTL", async (t) => {
+  const f = await fixture(t);
+  const rows = () => presence().list().filter((r) => r.key.startsWith(f.stateDir));
+  f.fake.uncertainCreate = true;
+  await assert.rejects(f.transport.launch(f.input), errorCode("launch_uncertain"));
+  assert.equal(rows().length, 1);
+  assert.equal(rows()[0].paneId, undefined);
+  assert.equal(await f.transport.reconcilePresence({ now: Date.now() + 60_000 }), 0);
+  assert.equal(rows().length, 1);
+  assert.equal(await f.transport.reconcilePresence({ now: Date.now() + 11 * 60_000 }), 1);
+  assert.equal(rows().length, 0);
+});
+
 test("once-per-task delegated tools never reuse a result for different arguments", async (t) => {
   const f = await fixture(t);
   const h = await f.transport.launch({ ...f.input, ...MERGER });

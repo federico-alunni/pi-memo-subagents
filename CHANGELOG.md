@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Widget: orphan "⚠ launch uncertain" rows no longer stay forever. A launch that fails before any pane exists (e.g. `Herdr current workspace missing`) leaves no row (same `launch_uncertain` error and message). A row that does exist is retired by `AgentRuntime.reconcilePresence()` — called from the widget refresh tick, at most every 15 s and only while such a row exists — when the child left an `exit.json`, when Herdr answers that its pane does not exist, or (no pane identified) after 10 minutes. A pane that still exists, or a Herdr that cannot answer, keeps the row: the child may still start. Display only.
+
 ## 0.5.0 — 2026-10-16
 
 ### Added

@@ -2156,6 +2156,7 @@ async function resolveResumeWorktree(
 }
 
 export const __test__ = {
+  reconcileUncertainPresence,
   borderLine,
   renderSubagentWidgetLines,
   renderWidgetLines,
@@ -2230,10 +2231,24 @@ function receivePanel(payload: unknown): void {
   if (visiblePanels([...runningSubagents.values()]).length > 0) startWidgetRefresh();
 }
 
+/**
+ * "⚠ launch uncertain" rows have no handle, so nothing else retires them when the pane is gone: ask the
+ * runtime now and then (display only), and only while such a row exists.
+ */
+const PRESENCE_RECONCILE_MS = 15_000;
+let lastPresenceReconcile = 0;
+function reconcileUncertainPresence(now = Date.now()): void {
+  if (now - lastPresenceReconcile < PRESENCE_RECONCILE_MS) return;
+  if (!presence().list().some((entry) => entry.state === "launch-uncertain")) return;
+  lastPresenceReconcile = now;
+  void subagentRuntime().reconcilePresence().catch(() => {});
+}
+
 function startWidgetRefresh() {
   if (widgetInterval) return;
   updateWidget(); // immediate first render
   widgetInterval = setInterval(() => {
+    reconcileUncertainPresence();
     updateWidget();
     void syncMirrors();
   }, 1000);
