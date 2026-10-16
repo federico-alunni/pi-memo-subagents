@@ -2099,6 +2099,36 @@ describe("subagent interruption", () => {
     assert.equal(registeredTools.some((tool) => tool.name === "subagent_interrupt"), true);
   });
 
+  it("registers subagent_send and denies it with spawning false", () => {
+    const { api, registeredTools } = createMockExtensionApi();
+    (subagentsModule as any).default(api);
+    assert.equal(registeredTools.some((tool) => tool.name === "subagent_send"), true);
+    const denied = (subagentsModule as any).__test__.resolveDenyTools({ spawning: false });
+    assert.equal(denied.has("subagent_send"), true);
+  });
+
+  it("subagent_send reports unknown targets and targets without a handle", async () => {
+    const { api, registeredTools } = createMockExtensionApi();
+    (subagentsModule as any).default(api);
+    const send = registeredTools.find((tool) => tool.name === "subagent_send");
+    const unknown = await send.execute("t1", { id: "nope", message: "hi" });
+    assert.equal(unknown.isError, true);
+    assert.match(unknown.content[0].text, /No running subagent/);
+
+    const testApi = (subagentsModule as any).__test__;
+    const runningMap = testApi.runningSubagents as Map<string, any>;
+    runningMap.clear();
+    try {
+      const noHandle = makeRunning({ id: "s1", name: "Idle", surface: "s1", sessionFile: "s1.jsonl" });
+      runningMap.set("s1", noHandle);
+      const refused = await send.execute("t2", { id: "s1", message: "hi" });
+      assert.equal(refused.isError, true);
+      assert.match(refused.content[0].text, /no active handle/);
+    } finally {
+      runningMap.clear();
+    }
+  });
+
   it("resolves interrupt targets by exact id and reports name ambiguity", () => {
     const testApi = (subagentsModule as any).__test__;
     const runningMap = testApi.runningSubagents as Map<string, any>;

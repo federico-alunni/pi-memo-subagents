@@ -345,6 +345,7 @@ interface ListedAgentDefinition extends AgentDefinition {
 const SPAWNING_TOOLS = new Set([
   "subagent",
   "subagent_interrupt",
+  "subagent_send",
   "subagents_list",
   "subagent_resume",
   "subagent_worktrees",
@@ -3235,6 +3236,22 @@ function assertSocketTarget(callerId: string | undefined, target: RunningSubagen
   if (!callerId || target.id === callerId || target.spawnedBy?.parentId === callerId) return;
   throw new Error(`subagent "${callerId}" may not act on "${target.name}"`);
 }
+/**
+ * Deliver a new task to an idle (settled) running subagent. The runtime returns a new handle for the new
+ * task: keep it, otherwise the supervision keeps observing the previous task.
+ */
+async function sendToRunningSubagent(
+  running: RunningSubagent,
+  prompt: string,
+  taskId?: string,
+): Promise<{ taskId: string }> {
+  if (!running.handle) throw new Error(`subagent "${running.name}" has no active handle`);
+  if (!prompt.trim()) throw new Error("A non-empty prompt is required");
+  const id = taskId ?? `send-${randomBytes(4).toString("hex")}`;
+  running.handle = await subagentRuntime().dispatch(running.handle, { taskId: id, prompt });
+  return { taskId: id };
+}
+
 /** Name and id of this agent as an ask-parent answerer: a subagent's own name, else the main agent's session. */
 function askSelf(): { name: string; id: string } {
   if (process.env.PI_SUBAGENT_ID)
@@ -3323,9 +3340,7 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         const agent = runningSubagents.get(id) ?? Array.from(runningSubagents.values()).find((a) => a.name === id);
         if (!agent) throw new Error(`subagent "${id}" not found`);
         assertSocketTarget(callerId, agent);
-        if (!agent.handle) throw new Error(`subagent "${id}" has no active handle`);
-        const taskId = options?.taskId ?? `send-${randomBytes(4).toString("hex")}`;
-        await subagentRuntime().dispatch(agent.handle, { taskId, prompt });
+        const { taskId } = await sendToRunningSubagent(agent, prompt, options?.taskId);
         return { ok: true, taskId };
       },
       async interrupt(callerId, target) {
@@ -3768,6 +3783,58 @@ export default function subagentsExtension(pi: ExtensionAPI) {
               : "";
         return new Text(
           theme.fg("accent", "▸") + " " + theme.fg("toolTitle", theme.bold(String(args.id ?? "subagent"))) + theme.fg("dim", ` — ${what}`),
+          0,
+          0,
+        );
+      },
+    });
+
+  // ── subagent_send tool ──
+  if (shouldRegister("subagent_send"))
+    pi.registerTool({
+      name: "subagent_send",
+      label: "Send to Subagent",
+      description:
+        "Send a new message (task) to a running Pi-backed subagent that is idle: it finished its turn and its pane stayed open " +
+        "(spawned with autoExit: false, or waiting for input). It is refused with `busy` while the subagent is still working: " +
+        "wait for its result, or use subagent_interrupt first. A subagent that already exited needs subagent_resume instead. " +
+        "Fire-and-forget: the harness delivers the result as usual when the new turn ends.",
+      promptSnippet:
+        "Send a follow-up message to a running, idle subagent (autoExit: false). Refused while it is busy; use subagent_resume for an exited one.",
+      parameters: Type.Object({
+        id: Type.Optional(Type.String({ description: "Exact running subagent id" })),
+        name: Type.Optional(Type.String({ description: "Exact running subagent display name" })),
+        message: Type.String({ description: "The message / task for the subagent" }),
+      }),
+
+      async execute(_toolCallId, params) {
+        const resolved = resolveInterruptTarget(params);
+        if ("error" in resolved) {
+          return { content: [{ type: "text" as const, text: resolved.error }], details: { error: resolved.error }, isError: true };
+        }
+        const { running } = resolved;
+        try {
+          const { taskId } = await sendToRunningSubagent(running, params.message);
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Message sent to subagent "${running.name}" [${running.id}] (task ${taskId}). Its result will be delivered when the turn ends.`,
+              },
+            ],
+            details: { status: "sent", id: running.id, name: running.name, taskId },
+          };
+        } catch (error) {
+          const message = `Failed to send to subagent "${running.name}": ${error instanceof Error ? error.message : String(error)}`;
+          return { content: [{ type: "text" as const, text: message }], details: { error: message, id: running.id, name: running.name }, isError: true };
+        }
+      },
+
+      renderCall(args, theme) {
+        const target = args.id ? `${args.id}` : args.name ?? "(unknown)";
+        const preview = typeof args.message === "string" ? ` ${JSON.stringify(args.message).slice(0, 80)}` : "";
+        return new Text(
+          theme.fg("accent", "▸") + " " + theme.fg("toolTitle", theme.bold(target)) + theme.fg("dim", ` — send${preview}`),
           0,
           0,
         );

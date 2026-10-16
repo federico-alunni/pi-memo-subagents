@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-10-16
 
 ### Added
 
+- **`subagent_send` tool**: the main agent can send a follow-up message to a running, idle child (same `dispatch` as the session socket `send`). Refused with `busy` while the child is working. Denied by `spawning: false`.
 - **Ask-parent**: a subagent's `question` calls and bash approvals (`bashAsk`) go to the parent agent first, and reach the user only when the parent cannot answer. On by default for the children of `subagent`/`subagent_resume`; opt out with `ask-parent: false` in the agent definition or `askParent: false` on the spawn (the parameter wins); opted-out children behave exactly as before.
   - The parent agent receives a steer message (`subagent_request`: child id/name, kind, text and options or the command, `requestId`) and answers with the new `subagent_answer` tool (`answer`, `decision: "once" | "deny"`, `escalate: true`, `note`). Repeated or stale answers are refused. The child keeps running and waits; it never exits like `caller_ping`.
   - Policy limits: the parent may answer questions, deny, or allow a command once. "Always" can only be granted by the user (a parent `always` escalates). Commands the child's policy blocks are never sent, and the child re-checks every decision against its bash policy before running anything.
@@ -16,6 +17,7 @@
 
 ### Changed
 
+- Socket `send` (and `subagent_send`) now keep the handle returned by `dispatch`, so the supervision observes the new task instead of the previous one.
 - Tests: the expected `question` extension path follows the runtime's own resolution (the pi-installed `pi-memo-question` first), so the suite passes on machines that installed it.
 - Pane selector: a new `auto` launch takes the visible split whenever it is free (main tab with only the main pane, not zoomed, split not reserved), even with other agents open in background tabs. When the visible agent finishes, the next open agent in menu order (`Ctrl+Alt+X` order, wrapping around) is moved into the split once the finished pane has closed — same pane ID and terminal, through its runtime; the widget `▶` and `/subagent` menu follow it. Promotions share the launches' split reservation and the selector's refusals (unrelated splits, zoom, other workspaces).
 - Pane selector: agents are shown in a column right of the main pane, 40% of the tab by default (`PI_SUBAGENT_COLUMN_RATIO`, a number strictly between 0 and 1; invalid → 0.4), applied when the pane is created and on every move into the column. The column has two stacked slots: one open agent fills it, two are shown top/bottom, more run in background tabs. Each slot is reserved synchronously, so concurrent launches never create more than two agent panes nor an extra split (a second concurrent launch waits for the first one's pane and splits it down). `Ctrl+Alt+X` swaps the two shown agents, or with three or more rotates them as a queue (top → tab, bottom → top, next in menu order → bottom, wrapping around); `/subagent` selection and `visible` launches with both slots taken follow the same queue rule, a free slot is simply filled. A finishing shown agent's slot is filled in place by the next background agent in menu order, otherwise the remaining agent takes the whole column. Every move goes through the owning runtime, is read back and rolled back on failure; the widget `▶` and the menu mark both shown agents. `SelectorState.selected`/`reservedSplit` became `slots`/`reservedSlots` (older states are migrated on load).
