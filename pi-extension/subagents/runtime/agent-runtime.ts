@@ -2027,6 +2027,41 @@ export class AgentRuntime {
       );
     }); // request, not proof of interruption; await settled/interrupted evidence
   }
+  /**
+   * Inject a message into the run in progress (the child delivers it as a pi steer message, before its
+   * next step). Only for an accepted, unsettled task; the child acknowledges the delivery with an immutable
+   * record, which is awaited here. Without the ack the outcome is uncertain: the message may still arrive,
+   * so it must not be sent again.
+   */
+  async steer(h: AgentHandle, prompt: string, options: { timeoutMs?: number } = {}): Promise<{ steerId: string }> {
+    if (!prompt.trim()) throw new RuntimeError("busy", "A non-empty message is required");
+    return this.guarded(h, async () => {
+      await this.ownership(h);
+      const observation = await this.observe(h);
+      if (observation.kind !== "active")
+        throw new RuntimeError(
+          "busy",
+          observation.kind === "settled"
+            ? "The task is settled: send a new task instead"
+            : observation.kind === "starting"
+              ? "The child has not accepted its task yet"
+              : `The child cannot be steered (${observation.kind})`,
+        );
+      const steerId = randomUUID();
+      await publish(taskFile(h.protocolDir, steerId, "steer"), record(h, "steer", { requestId: steerId, prompt }));
+      const deadline = Date.now() + (options.timeoutMs ?? 5000);
+      while (Date.now() < deadline) {
+        const ack = await json<ChildRecord>(taskFile(h.protocolDir, steerId, "steer-ack"));
+        if (validTask(ack, h, "steer-ack")) return { steerId };
+        await delay(25);
+      }
+      throw new RuntimeError(
+        "dispatch_uncertain",
+        "Steer not acknowledged by the child: it may still be delivered, do not send it again",
+        { steerId },
+      );
+    });
+  }
   async stop(h: AgentHandle): Promise<void> {
     await this.guarded(h, async () => {
       await this.stopOnce(h);

@@ -184,6 +184,9 @@ export interface ChildRecord extends TaskIdentity {
     | "takeover"
     | "interrupt-request"
     | "interrupt-ack"
+    /** A message injected into the running turn of the current task (steer), and its delivery ack. */
+    | "steer"
+    | "steer-ack"
     /** The child is waiting for a human answer in its own pane. */
     | "question"
     | "answer"
@@ -199,6 +202,8 @@ export interface ChildRecord extends TaskIdentity {
   summary?: string;
   error?: string;
   requestId?: string;
+  /** Steer: the message to inject. */
+  prompt?: string;
   tool?: string;
   params?: unknown;
   result?: unknown;

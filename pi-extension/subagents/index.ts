@@ -2156,6 +2156,7 @@ async function resolveResumeWorktree(
 }
 
 export const __test__ = {
+  sendToRunningSubagent,
   reconcileUncertainPresence,
   borderLine,
   renderSubagentWidgetLines,
@@ -3252,19 +3253,27 @@ function assertSocketTarget(callerId: string | undefined, target: RunningSubagen
   throw new Error(`subagent "${callerId}" may not act on "${target.name}"`);
 }
 /**
- * Deliver a new task to an idle (settled) running subagent. The runtime returns a new handle for the new
- * task: keep it, otherwise the supervision keeps observing the previous task.
+ * Send a message to a running subagent. Idle (settled): a new task, and the runtime returns a new handle
+ * to keep, otherwise the supervision keeps observing the previous task. Working: a steer message injected
+ * into the run in progress (same task, same handle). Which one applies is decided by the runtime's own
+ * observation of the child, never by the display state.
  */
 async function sendToRunningSubagent(
   running: RunningSubagent,
   prompt: string,
   taskId?: string,
-): Promise<{ taskId: string }> {
+): Promise<{ taskId: string; mode: "task" | "steer" }> {
   if (!running.handle) throw new Error(`subagent "${running.name}" has no active handle`);
   if (!prompt.trim()) throw new Error("A non-empty prompt is required");
+  const runtimeApi = subagentRuntime();
+  const observation = await runtimeApi.observe(running.handle);
+  if (observation.kind === "active") {
+    await runtimeApi.steer(running.handle, prompt);
+    return { taskId: running.handle.taskId, mode: "steer" };
+  }
   const id = taskId ?? `send-${randomBytes(4).toString("hex")}`;
-  running.handle = await subagentRuntime().dispatch(running.handle, { taskId: id, prompt });
-  return { taskId: id };
+  running.handle = await runtimeApi.dispatch(running.handle, { taskId: id, prompt });
+  return { taskId: id, mode: "task" };
 }
 
 /** Name and id of this agent as an ask-parent answerer: a subagent's own name, else the main agent's session. */
@@ -3355,8 +3364,8 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         const agent = runningSubagents.get(id) ?? Array.from(runningSubagents.values()).find((a) => a.name === id);
         if (!agent) throw new Error(`subagent "${id}" not found`);
         assertSocketTarget(callerId, agent);
-        const { taskId } = await sendToRunningSubagent(agent, prompt, options?.taskId);
-        return { ok: true, taskId };
+        const { taskId, mode } = await sendToRunningSubagent(agent, prompt, options?.taskId);
+        return { ok: true, taskId, mode };
       },
       async interrupt(callerId, target) {
         const resolved = resolveInterruptTarget(target);
@@ -3810,12 +3819,12 @@ export default function subagentsExtension(pi: ExtensionAPI) {
       name: "subagent_send",
       label: "Send to Subagent",
       description:
-        "Send a new message (task) to a running Pi-backed subagent that is idle: it finished its turn and its pane stayed open " +
-        "(spawned with autoExit: false, or waiting for input). It is refused with `busy` while the subagent is still working: " +
-        "wait for its result, or use subagent_interrupt first. A subagent that already exited needs subagent_resume instead. " +
-        "Fire-and-forget: the harness delivers the result as usual when the new turn ends.",
+        "Send a message to a running Pi-backed subagent. If it is working, the message is injected into its current run as a steer " +
+        "(it reaches the model before its next step; no interrupt needed, the work continues). If it is idle (finished its turn, pane open), " +
+        "it starts a new task. Refused while the child has not started its task, and for one that already exited (use subagent_resume). " +
+        "Fire-and-forget: the result is delivered as usual when the turn ends.",
       promptSnippet:
-        "Send a follow-up message to a running, idle subagent (autoExit: false). Refused while it is busy; use subagent_resume for an exited one.",
+        "Send a message to a running subagent: steers it mid-run if working, starts a new task if idle. Use subagent_resume for an exited one.",
       parameters: Type.Object({
         id: Type.Optional(Type.String({ description: "Exact running subagent id" })),
         name: Type.Optional(Type.String({ description: "Exact running subagent display name" })),
@@ -3829,15 +3838,18 @@ export default function subagentsExtension(pi: ExtensionAPI) {
         }
         const { running } = resolved;
         try {
-          const { taskId } = await sendToRunningSubagent(running, params.message);
+          const { taskId, mode } = await sendToRunningSubagent(running, params.message);
           return {
             content: [
               {
                 type: "text" as const,
-                text: `Message sent to subagent "${running.name}" [${running.id}] (task ${taskId}). Its result will be delivered when the turn ends.`,
+                text:
+                  mode === "steer"
+                    ? `Message injected into the current run of subagent "${running.name}" [${running.id}] (steer). Its result will be delivered when the run ends.`
+                    : `Message sent to subagent "${running.name}" [${running.id}] (new task ${taskId}). Its result will be delivered when the turn ends.`,
               },
             ],
-            details: { status: "sent", id: running.id, name: running.name, taskId },
+            details: { status: "sent", mode, id: running.id, name: running.name, taskId },
           };
         } catch (error) {
           const message = `Failed to send to subagent "${running.name}": ${error instanceof Error ? error.message : String(error)}`;

@@ -52,6 +52,8 @@ export interface ChildHost {
   /** Deliver one task: `/skill:<name>` messages first, then the prompt, in the same run. */
   sendPrompt(prompt: string, skills?: string[]): void;
   abort(): void;
+  /** Inject a message into the run in progress (pi `deliverAs: "steer"`): it reaches the model before its next step. */
+  steer(prompt: string): void;
   shutdown(): void;
 }
 export const DEFAULT_DELEGATED_TIMEOUT_MS = 300000;
@@ -203,6 +205,9 @@ export class ChildRuntime {
           false,
         );
       }
+      // Steer: only into a run of the current, accepted task. The ack is published before the delivery
+      // (like `accepted` for a prompt): a message is never delivered twice. Anything else stays unacknowledged.
+      if (this.active && sameTask(this.active, task) && !this.host.isIdle()) await this.deliverSteers(task);
       const shutdown = await json<ChildRecord>(
         join(this.boot.protocolDir, "shutdown.json"),
       );
@@ -267,6 +272,25 @@ export class ChildRuntime {
       this.host.sendPrompt(task.prompt, task.skills);
     } finally {
       this.busy = false;
+    }
+  }
+  private async deliverSteers(task: TaskCommand): Promise<void> {
+    const steers: ChildRecord[] = [];
+    for (const name of (await readdir(this.boot.protocolDir)).filter((n) => n.endsWith(".steer.json"))) {
+      const steer = await json<ChildRecord>(join(this.boot.protocolDir, name)).catch(() => undefined);
+      if (
+        validTask(steer, task, "steer") &&
+        typeof steer.requestId === "string" &&
+        typeof steer.prompt === "string" &&
+        steer.prompt &&
+        join(this.boot.protocolDir, name) === taskFile(this.boot.protocolDir, steer.requestId, "steer") &&
+        !(await json(taskFile(this.boot.protocolDir, steer.requestId, "steer-ack")))
+      )
+        steers.push(steer);
+    }
+    for (const steer of steers.sort((a, b) => a.at.localeCompare(b.at))) {
+      await publish(taskFile(this.boot.protocolDir, steer.requestId!, "steer-ack"), record(task, "steer-ack", { requestId: steer.requestId }));
+      this.host.steer(steer.prompt!);
     }
   }
   agentEnd(messages: readonly unknown[]): void {

@@ -54,7 +54,7 @@ The default surface is `selector` (`PI_SUBAGENT_SURFACE`): agents are shown in a
 | `subagents_list` | tool | List discoverable agent definitions. |
 | `subagent_resume` | tool | Resume a child session in a new pane (async). |
 | `subagent_interrupt` | tool | Interrupt the current turn of a running child (correlated request; the child stays open). |
-| `subagent_send` | tool | Send a follow-up message to a running, idle child (e.g. `autoExit: false`). Refused with `busy` while the child is working; exited children need `subagent_resume`. |
+| `subagent_send` | tool | Message a running child. Working: injected into its current run as a steer (no interrupt, same task). Idle: starts a new task. Not for an exited child (`subagent_resume`). |
 | `subagent_worktrees` | tool | List/remove worktrees created with `worktree: true`. |
 | `subagent_answer` | tool | Answer a child's `subagent_request` (question or bash approval), or escalate it to the user. |
 | `/subagent [agent task]` | command | Pick the visible child, or spawn `agent` with `task`. |

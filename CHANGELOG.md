@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **`subagent_send` works as a steer.** A working child no longer answers `Previous task is not demonstrably settled`: the message is injected into its current run (pi `deliverAs: "steer"`, it reaches the model before its next step), with no interrupt and no new task. An idle (settled) child still gets a new task. The choice follows the runtime's own observation of the child (`active` → steer, otherwise dispatch); a child that has not accepted its task yet is refused. The socket `send` does the same and returns `mode: "steer" | "task"`.
+- Runtime: `AgentRuntime.steer(handle, prompt, { timeoutMs })` publishes an immutable `<id>.steer.json` (new record kinds `steer` / `steer-ack`); the child acknowledges it **before** delivering (like `accepted`), so a message is never delivered twice. It is only delivered into a run of the current accepted task: a stale message is ignored by a later task. No ack within the timeout → `dispatch_uncertain` ("do not send it again"). `ChildHost` gains `steer(prompt)`. Contract unchanged for every other record.
+
 ## 0.5.1 — 2026-10-16
 
 ### Fixed

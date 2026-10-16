@@ -23,7 +23,7 @@ Newline-delimited JSON, one response per request:
 |---|---|---|
 | `spawn` | the `subagent` tool parameters, plus `worktreePath` and `group` | `{ id, name, surface, worktree, sessionFile }` (main) / `{ id }` (from a subagent) |
 | `list` | – | running subagents: `id, name, agent, group, slot, worktree, sessionFile, lifecycle, status` |
-| `send` | `{ id, prompt, options?: { taskId } }` | `{ ok, taskId }` (a new task for an idle subagent) |
+| `send` | `{ id, prompt, options?: { taskId } }` | `{ ok, taskId, mode }`: `mode: "steer"` injects the prompt into the run in progress of a working subagent (same task); `mode: "task"` is a new task for an idle one |
 | `interrupt` | `{ id }` or `{ name }` | `{ ok, id }` |
 
 ## Who is calling

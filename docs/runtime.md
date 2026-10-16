@@ -305,6 +305,10 @@ class AgentRuntime {
   askHeartbeat(h: AgentHandle, beat: { name: string; id: string; closed?: boolean }): Promise<void>;
   hasResponse(h: AgentHandle, requestId: string): Promise<boolean>;
   interrupt(h: AgentHandle): Promise<void>;
+  /** Inject a message into the run in progress (pi steer) of an accepted, unsettled task. Resolves once the child
+   *  acknowledged it (`<key>.steer-ack.json`, published before the delivery: never delivered twice); no ack within
+   *  `timeoutMs` (default 5000) → `dispatch_uncertain`, do not resend. Refused (`busy`) for settled/starting tasks. */
+  steer(h: AgentHandle, prompt: string, options?: { timeoutMs?: number }): Promise<{ steerId: string }>;
   stop(h: AgentHandle): Promise<void>;
   close(h: AgentHandle): Promise<void>;
   inspectShutdown(h: AgentHandle): Promise<{ acknowledged: boolean; exited: boolean; pidReused: boolean; takenOver: boolean }>;
@@ -385,6 +389,7 @@ shell and process must still match). For workflow children any tab change not re
 `launch-NNNN-<phase>.json` (launch phases), `boot.json`, `ready.json`, `task.json` (current, replaced),
 `<key>.dispatch.json`, `<key>.accepted.json`, `<key>.settled.json` (key = sha256(taskId)),
 `<key>.request.json` / `<key>.response.json` (key = sha256(requestId)), `interrupt.json` / `interrupt-ack.json`,
+`<key>.steer.json` / `<key>.steer-ack.json` (key = sha256(steerId)),
 `shutdown.json` / `shutdown-ack.json`, `takeover.json`, `question.json`, `exit.json`, `activity.json`,
 `<key>.received.json` / `<key>.escalated.json` and `parent.json` (ask-parent),
 `move-<uuid>.json`, `sessions/`. The prompt lives only in

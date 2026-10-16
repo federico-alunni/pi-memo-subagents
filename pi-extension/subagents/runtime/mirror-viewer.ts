@@ -170,6 +170,7 @@ export async function main(env: NodeJS.ProcessEnv = process.env): Promise<void> 
     effort: boot.effort,
     isIdle: () => true,
     sendPrompt: () => {},
+    steer: () => {},
     abort: () => {},
     shutdown: stop,
   });

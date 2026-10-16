@@ -102,6 +102,7 @@ class FakeHerdr {
   prompts: string[] = [];
   skills: string[][] = [];
   aborts = 0;
+  steers: string[] = [];
   shutdowns = 0;
   closes = 0;
   createCount = 0;
@@ -285,6 +286,7 @@ class FakeHerdr {
         if (skills?.length) this.skills.push(skills);
         this.idle = false;
       },
+      steer: (prompt) => { this.steers.push(prompt); },
       abort: () => {
         this.aborts++;
       },
@@ -1372,6 +1374,7 @@ test("child rejects model fallback or effort clamping at readiness", async (t) =
     effort: "medium",
     isIdle: () => true,
     sendPrompt: () => assert.fail("must not prompt"),
+    steer: () => assert.fail("must not steer"),
     abort: () => {},
     shutdown: () => {},
   });
@@ -1738,6 +1741,62 @@ test("presence: a launch-uncertain row without a pane (lost create response) exp
   assert.equal(rows().length, 0);
 });
 
+test("steer: a message reaches a working child once, with an immutable ack, without a new task", async (t) => {
+  const f = await fixture(t);
+  const h = await f.transport.launch(f.input);
+  assert.equal((await f.transport.observe(h)).kind, "active");
+  assert.equal(f.fake.prompts.length, 1);
+  f.fake.idle = false; // the run is in progress
+  const pending = f.transport.steer(h, "also do X");
+  await new Promise((r) => setTimeout(r, 40));
+  await f.fake.runtime!.tick();
+  const { steerId } = await pending;
+  assert.deepEqual(f.fake.steers, ["also do X"]);
+  assert.equal(f.fake.prompts.length, 1); // not a new prompt
+  const ack = await json<any>(taskFile(h.protocolDir, steerId, "steer-ack"));
+  assert.equal(ack.kind, "steer-ack");
+  // Further ticks never deliver it again.
+  await f.fake.runtime!.tick();
+  await f.fake.runtime!.tick();
+  assert.deepEqual(f.fake.steers, ["also do X"]);
+  // Same task and same handle: the supervision keeps observing it.
+  assert.equal((await f.transport.observe(h)).kind, "active");
+});
+
+test("steer: refused for a settled task, an empty message and a task the child has not accepted", async (t) => {
+  const f = await fixture(t);
+  const h = await f.transport.launch(f.input);
+  await assert.rejects(f.transport.steer(h, "  "), errorCode("busy"));
+  await f.fake.settle();
+  await assert.rejects(f.transport.steer(h, "late"), (e: any) => errorCode("busy")(e) && /settled/.test(e.message));
+  assert.equal(f.fake.steers.length, 0);
+  const files = (await readdir(h.protocolDir)).filter((n) => n.endsWith(".steer.json"));
+  assert.equal(files.length, 0); // nothing was even written
+});
+
+test("steer: no ack from the child is reported as uncertain, never as delivered", async (t) => {
+  const f = await fixture(t);
+  const h = await f.transport.launch(f.input);
+  f.fake.idle = false;
+  // The child's tick is not run: nobody acknowledges.
+  await assert.rejects(
+    f.transport.steer(h, "hello", { timeoutMs: 120 }),
+    (e: any) => errorCode("dispatch_uncertain")(e) && /do not send it again/.test(e.message),
+  );
+  assert.equal(f.fake.steers.length, 0);
+});
+
+test("steer: an idle child (waiting for a task) never receives a steer; a stale message is not delivered later", async (t) => {
+  const f = await fixture(t);
+  const h = await f.transport.launch(f.input);
+  f.fake.idle = false;
+  await assert.rejects(f.transport.steer(h, "unacked", { timeoutMs: 60 }), errorCode("dispatch_uncertain"));
+  // The run ends before the child ever looked at the file: the message must not leak into a later run.
+  await f.fake.settle();
+  await f.fake.runtime!.tick();
+  assert.equal(f.fake.steers.length, 0);
+});
+
 test("once-per-task delegated tools never reuse a result for different arguments", async (t) => {
   const f = await fixture(t);
   const h = await f.transport.launch({ ...f.input, ...MERGER });
@@ -1907,6 +1966,7 @@ test("an existing or seeded session file is opened exactly, with its header id a
     effort: f.input.thinking,
     isIdle: () => true,
     sendPrompt: () => assert.fail("must not prompt"),
+    steer: () => assert.fail("must not steer"),
     abort: () => {},
     shutdown: () => {},
   });

@@ -176,6 +176,7 @@ async function childFixture(
     effort: "low",
     isIdle: () => idle,
     sendPrompt: () => (idle = false),
+    steer: () => {},
     abort: () => {},
     shutdown: () => (state.exited = true),
   });

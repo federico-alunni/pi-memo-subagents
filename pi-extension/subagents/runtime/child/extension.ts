@@ -377,6 +377,7 @@ export default function childExtension(pi: ExtensionAPI): void {
       isIdle: () => ctx.isIdle(),
       sendPrompt: (prompt, skills = []) => delivery.send(prompt, skills),
       abort: () => ctx.abort(),
+      steer: (prompt) => pi.sendUserMessage(prompt, { deliverAs: "steer" }),
       shutdown: () => ctx.shutdown(),
     });
     const internalTools = new Set((boot.policy.delegatedTools ?? []).filter((d) => d.internal).map((d) => d.name));
